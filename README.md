@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/harshit-3/minesafe-vision/actions/workflows/ci.yml/badge.svg)](https://github.com/harshit-3/minesafe-vision/actions)
 
+**[▶ Live demo: minesafe-vision.streamlit.app](https://minesafe-vision.streamlit.app)**: check test images or your own photos, and watch a site video play back annotated with live alerts. The free host is a shared CPU, so video is analysed at about 3 frames per second of footage; continuous webcam monitoring runs locally (see *Live monitoring*).
+
 A computer-vision safety system for mine sites, construction sites and warehouses. It checks every
 worker in a camera frame for **missing helmets and hi-vis vests**, flags **pedestrians inside a
 forklift or vehicle's exclusion zone**, and turns frame-by-frame detections into **debounced
