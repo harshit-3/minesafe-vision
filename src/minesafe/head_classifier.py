@@ -15,6 +15,7 @@ import cv2
 import numpy as np
 import onnxruntime as ort
 
+from .detector import session_options
 from .rules import PPE_RULES, Detection, _in_band
 
 INPUT = 96
@@ -52,7 +53,8 @@ class HeadClassifier:
     def __init__(self, path: str | Path, providers: list[str] | None = None,
                  helmet_thr: float = 0.95, bare_thr: float = 0.5, min_head_px: float = 10):
         # helmet_thr / bare_thr / min_head_px are chosen on the validation split (scripts/eval_heads.py)
-        self.session = ort.InferenceSession(str(path), providers=providers or ["CPUExecutionProvider"])
+        self.session = ort.InferenceSession(str(path), session_options(),
+                                            providers=providers or ["CPUExecutionProvider"])
         self.helmet_thr, self.bare_thr, self.min_head_px = helmet_thr, bare_thr, min_head_px
 
     def predict(self, img: np.ndarray, boxes: list) -> np.ndarray:

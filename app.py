@@ -23,6 +23,8 @@ from minesafe.rules import SiteConfig  # noqa: E402
 
 DET, HEAD = load_models()
 EXAMPLES = sorted(str(p) for p in (ROOT / "assets" / "examples").glob("*.jpg"))
+DEMO_VIDEO = ROOT / "assets" / "demo_site.mp4"
+ON_GPU = "CUDAExecutionProvider" in DET.session.get_providers()
 EVENT_COLS = ["time_s", "track_id", "violation"]
 
 
@@ -64,10 +66,15 @@ def run_video(path, ppe, margin, conf):
         return
     cap = cv2.VideoCapture(path)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25
+    # On CPU (e.g. a free Hugging Face Space) analyse ~5 frames per video-second so playback keeps up;
+    # the debouncer is told the effective frame rate so alert timing stays correct.
+    stride = 1 if ON_GPU else max(1, round(fps / 5))
     DET.conf = conf
-    proc = LiveProcessor(DET, HEAD, _cfg(ppe, margin), fps)
+    proc = LiveProcessor(DET, HEAD, _cfg(ppe, margin), fps / stride)
     last_emit = 0.0
     while True:
+        for _ in range(stride - 1):
+            cap.grab()
         ok, frame = cap.read()
         if not ok:
             break
@@ -107,6 +114,8 @@ with gr.Blocks(title="MineSafe Vision") as demo:
             vout = gr.Image(label="Live playback (annotated)")
         events = gr.Dataframe(label="Alerts", headers=EVENT_COLS)
         vin.change(run_video, [vin, ppe, margin, conf], [vout, events])
+        if DEMO_VIDEO.exists():
+            gr.Examples([str(DEMO_VIDEO)], vin, label="Demo clip")
 
     with gr.Tab("Image"):
         with gr.Row():
