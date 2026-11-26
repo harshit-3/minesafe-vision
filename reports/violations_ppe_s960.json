@@ -1,0 +1,140 @@
+[
+  {
+    "policy": "lenient",
+    "conf": 0.25,
+    "worker_recall": 0.963,
+    "no_helmet": {
+      "precision": 0.941,
+      "recall": 0.743,
+      "f1": 0.83,
+      "support": 171,
+      "tp": 127,
+      "fn": 44,
+      "fp": 8
+    },
+    "no_vest": {
+      "precision": 0.935,
+      "recall": 0.685,
+      "f1": 0.791,
+      "support": 127,
+      "tp": 87,
+      "fn": 40,
+      "fp": 6
+    }
+  },
+  {
+    "policy": "lenient",
+    "conf": 0.35,
+    "worker_recall": 0.95,
+    "no_helmet": {
+      "precision": 0.966,
+      "recall": 0.673,
+      "f1": 0.793,
+      "support": 171,
+      "tp": 115,
+      "fn": 56,
+      "fp": 4
+    },
+    "no_vest": {
+      "precision": 0.944,
+      "recall": 0.661,
+      "f1": 0.778,
+      "support": 127,
+      "tp": 84,
+      "fn": 43,
+      "fp": 5
+    }
+  },
+  {
+    "policy": "lenient",
+    "conf": 0.5,
+    "worker_recall": 0.923,
+    "no_helmet": {
+      "precision": 0.972,
+      "recall": 0.614,
+      "f1": 0.753,
+      "support": 171,
+      "tp": 105,
+      "fn": 66,
+      "fp": 3
+    },
+    "no_vest": {
+      "precision": 0.963,
+      "recall": 0.614,
+      "f1": 0.75,
+      "support": 127,
+      "tp": 78,
+      "fn": 49,
+      "fp": 3
+    }
+  },
+  {
+    "policy": "strict",
+    "conf": 0.25,
+    "worker_recall": 0.963,
+    "no_helmet": {
+      "precision": 0.717,
+      "recall": 0.889,
+      "f1": 0.794,
+      "support": 171,
+      "tp": 152,
+      "fn": 19,
+      "fp": 60
+    },
+    "no_vest": {
+      "precision": 0.74,
+      "recall": 0.85,
+      "f1": 0.791,
+      "support": 127,
+      "tp": 108,
+      "fn": 19,
+      "fp": 38
+    }
+  },
+  {
+    "policy": "strict",
+    "conf": 0.35,
+    "worker_recall": 0.95,
+    "no_helmet": {
+      "precision": 0.714,
+      "recall": 0.877,
+      "f1": 0.787,
+      "support": 171,
+      "tp": 150,
+      "fn": 21,
+      "fp": 60
+    },
+    "no_vest": {
+      "precision": 0.743,
+      "recall": 0.843,
+      "f1": 0.79,
+      "support": 127,
+      "tp": 107,
+      "fn": 20,
+      "fp": 37
+    }
+  },
+  {
+    "policy": "strict",
+    "conf": 0.5,
+    "worker_recall": 0.923,
+    "no_helmet": {
+      "precision": 0.724,
+      "recall": 0.842,
+      "f1": 0.778,
+      "support": 171,
+      "tp": 144,
+      "fn": 27,
+      "fp": 55
+    },
+    "no_vest": {
+      "precision": 0.772,
+      "recall": 0.827,
+      "f1": 0.798,
+      "support": 127,
+      "tp": 105,
+      "fn": 22,
+      "fp": 31
+    }
+  }
+]

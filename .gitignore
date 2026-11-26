@@ -1,0 +1,17 @@
+datasets/
+runs/
+runs_*.log
+weights/*.pt
+weights/*.engine
+!weights/ppe_s960.onnx
+*.mp4
+!assets/*.mp4
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.gradio/
+.env
+mlruns/
+mlflow.db
+*.pt

@@ -1,0 +1,51 @@
+{
+  "gpu": "NVIDIA GeForce RTX 4070 Laptop GPU",
+  "imgsz": 960,
+  "input_frame": [
+    960,
+    1280
+  ],
+  "results": [
+    {
+      "format": "PyTorch FP32 (GPU)",
+      "mAP50": 0.8459,
+      "mAP50_95": 0.6292,
+      "latency_p50_ms": 16.6,
+      "latency_p95_ms": 18.8,
+      "fps": 60.2
+    },
+    {
+      "format": "PyTorch FP16 (GPU)",
+      "mAP50": 0.8448,
+      "mAP50_95": 0.6264,
+      "latency_p50_ms": 18.5,
+      "latency_p95_ms": 22.9,
+      "fps": 54.1
+    },
+    {
+      "format": "ONNX Runtime (CPU, i9-14900HX)",
+      "mAP50": 0.8401,
+      "mAP50_95": 0.6135,
+      "latency_p50_ms": 92.0,
+      "latency_p95_ms": 96.7,
+      "fps": 10.9,
+      "size_mb": 38.4
+    },
+    {
+      "format": "ONNX Runtime (CUDA)",
+      "mAP50": 0.8401,
+      "mAP50_95": 0.6135,
+      "latency_p50_ms": 27.6,
+      "latency_p95_ms": 32.0,
+      "fps": 36.2
+    },
+    {
+      "format": "TensorRT FP16 (GPU)",
+      "mAP50": 0.8397,
+      "mAP50_95": 0.624,
+      "latency_p50_ms": 8.4,
+      "latency_p95_ms": 10.7,
+      "fps": 119.4
+    }
+  ]
+}
