@@ -34,3 +34,7 @@ jobs:
           img=$(ls tests/fixtures/*.jpg | head -1)
           curl -sf -X POST localhost:8000/detect -F "file=@$img" | tee out.json
           python3 -c "import json; r=json.load(open('out.json')); assert r['workers'] > 0, r; print('workers', r['workers'])"
+          curl -sf localhost:8000/model | grep -q '"head_classifier":true'
+          # live MJPEG stream from the bundled demo camera must start producing JPEG frames
+          (curl -s --max-time 20 "localhost:8000/live/stream?camera=demo" || true) | head -c 200000 > stream.bin
+          grep -qa "Content-Type: image/jpeg" stream.bin && echo "live stream ok"

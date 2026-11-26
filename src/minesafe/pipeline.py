@@ -1,6 +1,9 @@
-"""Image + video pipelines: detect -> track -> rules -> debounce -> annotate / log events.
+"""Frame pipeline: detect -> head check -> track -> rules -> debounce -> annotate / events.
 
-    python -m minesafe.pipeline video.mp4 --model weights/ppe_s960.onnx --out out.mp4
+`LiveProcessor` handles one frame at a time, so the same code serves single images, video files
+and live camera streams (see minesafe.live).
+
+    python -m minesafe.pipeline video.mp4 --out annotated.mp4 --events events.jsonl
 """
 from __future__ import annotations
 
@@ -18,6 +21,21 @@ from .rules import Detection, SiteConfig, ViolationDebouncer, WorkerStatus, eval
 from .tracker import IoUTracker
 
 GREEN, RED, AMBER, GREY = (60, 180, 75), (40, 40, 220), (0, 165, 255), (160, 160, 160)
+WEIGHTS = Path(__file__).resolve().parents[2] / "weights"
+
+
+def load_models(detector_path: str | Path = WEIGHTS / "ppe_s960.onnx", head_path: str | Path | None = "auto",
+                conf: float = 0.35):
+    """Detector + optional second-stage head classifier (used automatically when its weights exist)."""
+    det = OnnxDetector(detector_path, conf=conf)
+    head = None
+    if head_path == "auto":
+        head_path = WEIGHTS / "head_cls.onnx"
+        head_path = head_path if Path(head_path).exists() else None
+    if head_path:
+        from .head_classifier import HeadClassifier
+        head = HeadClassifier(head_path)
+    return det, head
 
 
 def annotate(img: np.ndarray, dets: list[Detection], workers: list[WorkerStatus], cfg: SiteConfig) -> np.ndarray:
@@ -49,8 +67,13 @@ def annotate(img: np.ndarray, dets: list[Detection], workers: list[WorkerStatus]
     return out
 
 
-def process_image(det: OnnxDetector, bgr: np.ndarray, cfg: SiteConfig = SiteConfig()):
+def detect(det: OnnxDetector, bgr: np.ndarray, head=None) -> list[Detection]:
     dets = det(bgr)
+    return head.refine(bgr, dets) if head else dets
+
+
+def process_image(det: OnnxDetector, bgr: np.ndarray, cfg: SiteConfig = SiteConfig(), head=None):
+    dets = detect(det, bgr, head)
     workers = evaluate_frame(dets, cfg)
     return dets, workers, annotate(bgr, dets, workers, cfg)
 
@@ -66,42 +89,73 @@ def summarise(workers: list[WorkerStatus]) -> dict:
     }
 
 
+class LiveProcessor:
+    """Stateful per-stream processor: keeps worker identities and debounces alerts across frames."""
+
+    def __init__(self, det: OnnxDetector, head=None, cfg: SiteConfig = SiteConfig(), fps: float = 15.0):
+        self.det, self.head, self.cfg = det, head, cfg
+        self.tracker = IoUTracker()
+        self.debouncer = ViolationDebouncer(window=max(3, int(fps * 0.6)), min_hits=max(2, int(fps * 0.4)),
+                                            cooldown=int(fps * 30))
+        self.frame_idx, self.started = 0, time.time()
+        self.events: list[dict] = []
+        self._fps_ema = None
+
+    def process(self, frame: np.ndarray, overlay_stats: bool = True) -> tuple[np.ndarray, list[WorkerStatus], list]:
+        t0 = time.perf_counter()
+        dets = self.tracker.update(detect(self.det, frame, self.head))
+        workers = evaluate_frame(dets, self.cfg)
+        new = [{**asdict(e), "time_s": round(time.time() - self.started, 2)}
+               for e in self.debouncer.update(self.frame_idx, workers)]
+        self.events.extend(new)
+        out = annotate(frame, dets, workers, self.cfg)
+        dt = time.perf_counter() - t0
+        self._fps_ema = 1 / dt if self._fps_ema is None else 0.9 * self._fps_ema + 0.1 / max(dt, 1e-6)
+        if overlay_stats:
+            s = summarise(workers)
+            txt = f"{self._fps_ema:4.1f} FPS | workers {s['workers']} | violations {s['violations']} | " \
+                  f"alerts {len(self.events)}"
+            cv2.rectangle(out, (0, 0), (min(out.shape[1], 12 + 11 * len(txt)), 30), (0, 0, 0), -1)
+            cv2.putText(out, txt, (8, 21), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+        self.frame_idx += 1
+        return out, workers, new
+
+
 def process_video(det: OnnxDetector, src: str, out_path: str | None, cfg: SiteConfig = SiteConfig(),
-                  events_path: str | None = None, max_frames: int | None = None) -> dict:
+                  events_path: str | None = None, max_frames: int | None = None, head=None) -> dict:
     cap = cv2.VideoCapture(src)
     fps = cap.get(cv2.CAP_PROP_FPS) or 25
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     writer = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h)) if out_path else None
-    tracker = IoUTracker()
-    debouncer = ViolationDebouncer(window=int(fps * 0.6), min_hits=int(fps * 0.4), cooldown=int(fps * 30))
-    events, n, t_infer = [], 0, 0.0
+    proc = LiveProcessor(det, head, cfg, fps)
+    events, n, t_proc = [], 0, 0.0
     while True:
         ok, frame = cap.read()
         if not ok or (max_frames and n >= max_frames):
             break
         t0 = time.perf_counter()
-        dets = tracker.update(det(frame))
-        t_infer += time.perf_counter() - t0
-        workers = evaluate_frame(dets, cfg)
-        for e in debouncer.update(n, workers):
-            events.append({**asdict(e), "time_s": round(n / fps, 2)})
+        out, _, new = proc.process(frame, overlay_stats=False)
+        t_proc += time.perf_counter() - t0
+        events += [{**e, "time_s": round(e["frame"] / fps, 2)} for e in new]
         if writer:
-            writer.write(annotate(frame, dets, workers, cfg))
+            writer.write(out)
         n += 1
     cap.release()
     if writer:
         writer.release()
     if events_path:
         Path(events_path).write_text("\n".join(json.dumps(e) for e in events))
-    return {"frames": n, "events": events, "model_fps": round(n / t_infer, 1) if t_infer else None}
+    return {"frames": n, "events": events, "pipeline_fps": round(n / t_proc, 1) if t_proc else None}
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("source")
-    ap.add_argument("--model", default="weights/ppe_s960.onnx")
+    ap.add_argument("--model", default=str(WEIGHTS / "ppe_s960.onnx"))
+    ap.add_argument("--no-head-classifier", action="store_true")
     ap.add_argument("--out", default="out.mp4")
     ap.add_argument("--events", default="events.jsonl")
     a = ap.parse_args()
-    res = process_video(OnnxDetector(a.model), a.source, a.out, events_path=a.events)
+    det, head = load_models(a.model, None if a.no_head_classifier else "auto")
+    res = process_video(det, a.source, a.out, events_path=a.events, head=head)
     print(json.dumps({k: v for k, v in res.items() if k != "events"}), f"{len(res['events'])} events")

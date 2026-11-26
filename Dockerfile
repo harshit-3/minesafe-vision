@@ -9,7 +9,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY src/ src/
-COPY weights/ppe_s960.onnx weights/
+COPY weights/ppe_s960.onnx weights/head_cls.onnx weights/
+COPY assets/demo_site.mp4 assets/
+ENV MINESAFE_CAMERAS="demo=assets/demo_site.mp4"
 
 RUN useradd -m app && chown -R app /app
 USER app

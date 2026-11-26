@@ -16,16 +16,15 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
-from minesafe.detector import OnnxDetector  # noqa: E402
-from minesafe.pipeline import process_image, process_video  # noqa: E402
+from minesafe.pipeline import load_models, process_image, process_video  # noqa: E402
 
 EX = ROOT / "assets" / "examples"
-det = OnnxDetector(ROOT / "weights" / "ppe_s960.onnx", conf=0.35)
+det, head = load_models()
 
 # 1) results grid
 tiles = []
-for name in ["forklift_1", "no_helmet_2", "compliant_1", "forklift_2"]:
-    _, _, ann = process_image(det, cv2.imread(str(EX / f"{name}.jpg")))
+for name in ["no_helmet_2", "forklift_2", "compliant_1", "forklift_1"]:
+    _, _, ann = process_image(det, cv2.imread(str(EX / f"{name}.jpg")), head=head)
     ann = cv2.resize(ann, (960, round(960 * ann.shape[0] / ann.shape[1])))
     ann = ann[:600] if ann.shape[0] >= 600 else cv2.copyMakeBorder(ann, 0, 600 - ann.shape[0], 0, 0,
                                                                    cv2.BORDER_CONSTANT)
@@ -34,7 +33,7 @@ cv2.imwrite(str(ROOT / "assets" / "results_grid.jpg"), np.vstack([np.hstack(tile
             [cv2.IMWRITE_JPEG_QUALITY, 82])
 
 # 2) simulated pan video -> pipeline -> GIF
-src = cv2.imread(str(EX / "forklift_2.jpg"))
+src = cv2.imread(str(EX / "no_helmet_2.jpg"))
 h, w = src.shape[:2]
 cw, ch = int(w * 0.7), int(h * 0.7)
 tmp = Path(tempfile.mkdtemp())
@@ -46,7 +45,7 @@ for i in range(n):
     x, y = int(t * (w - cw)), int((1 - t) * (h - ch))
     vw.write(src[y:y + ch, x:x + cw])
 vw.release()
-res = process_video(det, str(raw), str(out))
+res = process_video(det, str(raw), str(out), head=head)
 print(json.dumps({"frames": res["frames"], "events": res["events"]}, indent=1))
 
 cap = cv2.VideoCapture(str(out))

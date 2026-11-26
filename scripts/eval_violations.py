@@ -36,7 +36,7 @@ def load_gt(label_path: Path, w: int, h: int) -> list[Detection]:
     return dets
 
 
-def evaluate(model_path: str, conf: float, gt_cfg: SiteConfig, pred_cfg: SiteConfig) -> dict:
+def evaluate(model_path: str, conf: float, gt_cfg: SiteConfig, pred_cfg: SiteConfig, head=None) -> dict:
     det = OnnxDetector(model_path, conf=conf)
     img_dir = ROOT / "datasets" / "construction-ppe" / "images" / "val"  # official val == our TEST
     counts = {t: Counter() for t in TYPES}
@@ -46,7 +46,8 @@ def evaluate(model_path: str, conf: float, gt_cfg: SiteConfig, pred_cfg: SiteCon
         h, w = img.shape[:2]
         gt_w = evaluate_frame(load_gt(img_path.parent.parent.parent / "labels" / "val" / f"{img_path.stem}.txt",
                                       w, h), gt_cfg)
-        pr_w = evaluate_frame(det(img), pred_cfg)
+        dets = det(img)
+        pr_w = evaluate_frame(head.refine(img, dets) if head else dets, pred_cfg)
         pairs = match_persons([g.person for g in gt_w], [p.person for p in pr_w])
         persons["gt"] += len(gt_w)
         persons["matched"] += len(pairs)
@@ -71,14 +72,21 @@ def evaluate(model_path: str, conf: float, gt_cfg: SiteConfig, pred_cfg: SiteCon
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=str(ROOT / "weights" / "ppe_s960.onnx"))
+    ap.add_argument("--head", default=None, help="head classifier ONNX (second stage)")
     a = ap.parse_args()
+    head = None
+    if a.head:
+        from minesafe.head_classifier import HeadClassifier
+        head = HeadClassifier(a.head)
     # Confidence filtering happens in the detector; ground truth always uses the lenient policy so
     # "truth" means a labelled no_helmet/no_vest. Strict mode is scored against the same truth.
     results = []
     for mode, strict in (("lenient", False), ("strict", True)):
         for c in (0.25, 0.35, 0.5):
-            results.append({"policy": mode, **evaluate(a.model, c, SiteConfig(min_conf=0.0),
-                                                       SiteConfig(min_conf=0.0, unknown_is_violation=strict))})
-    (ROOT / "runs" / f"violations_{Path(a.model).stem}.json").write_text(json.dumps(results, indent=2))
+            results.append({"policy": mode, "head_classifier": bool(head),
+                            **evaluate(a.model, c, SiteConfig(min_conf=0.0),
+                                       SiteConfig(min_conf=0.0, unknown_is_violation=strict), head)})
+    suffix = "_head" if head else ""
+    (ROOT / "reports" / f"violations_{Path(a.model).stem}{suffix}.json").write_text(json.dumps(results, indent=2))
     for r in results:
         print(json.dumps(r))

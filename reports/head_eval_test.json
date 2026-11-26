@@ -1,0 +1,37 @@
+{
+  "before": {
+    "confusion": {
+      "helmet->helmet": 264,
+      "helmet->missed": 26,
+      "helmet->no_helmet": 4,
+      "no_helmet->helmet": 11,
+      "no_helmet->missed": 36,
+      "no_helmet->no_helmet": 132
+    },
+    "bare_head_called_helmet": 0.061,
+    "bare_head_detected_as_violation": 0.737,
+    "helmet_called_bare": 0.014,
+    "n_no_helmet": 179,
+    "n_helmet": 294
+  },
+  "after": {
+    "confusion": {
+      "helmet->helmet": 262,
+      "helmet->missed": 25,
+      "helmet->no_helmet": 7,
+      "no_helmet->helmet": 8,
+      "no_helmet->missed": 31,
+      "no_helmet->no_helmet": 140
+    },
+    "bare_head_called_helmet": 0.045,
+    "bare_head_detected_as_violation": 0.782,
+    "helmet_called_bare": 0.024,
+    "n_no_helmet": 179,
+    "n_helmet": 294
+  },
+  "settings": {
+    "helmet_thr": 0.95,
+    "bare_thr": 0.5,
+    "min_head_px": 10
+  }
+}

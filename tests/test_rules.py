@@ -111,3 +111,45 @@ def test_forklift_operator_not_flagged_but_pedestrian_is():
     wd, wp = evaluate_frame([driver, pedestrian, forklift], SiteConfig(required_ppe=()))
     assert wd.is_operator and wd.violations == []
     assert wp.violations == ["vehicle_proximity"]
+
+
+def test_live_processor_tracks_and_debounces():
+    """LiveProcessor keeps one track per worker and raises one alert for a persistent violation."""
+    import numpy as np
+
+    from minesafe.pipeline import LiveProcessor
+
+    class FakeDet:
+        conf = 0.35
+
+        def __call__(self, frame):
+            return [Detection("person", (100, 100, 200, 400), 0.9),
+                    Detection("no_helmet", (130, 100, 170, 140), 0.8),
+                    Detection("vest", (110, 180, 190, 280), 0.8)]
+
+    proc = LiveProcessor(FakeDet(), None, SiteConfig(), fps=10)
+    frame = np.zeros((480, 640, 3), np.uint8)
+    for _ in range(40):
+        out, workers, _ = proc.process(frame)
+    assert out.shape == frame.shape
+    assert workers[0].person.track_id == 1
+    assert [e["violation"] for e in proc.events] == ["no_helmet"]
+
+
+def test_tracker_keeps_identity_for_small_fast_moving_worker():
+    """Tiny distant worker (12x30 px) moving 8 px/frame: boxes barely overlap frame to frame."""
+    tr = IoUTracker()
+    ids = [tr.update([Detection("person", (x, 50, x + 12, 80))])[0].track_id for x in range(0, 200, 8)]
+    assert len(set(ids)) == 1
+
+
+def test_tracker_survives_short_occlusion_and_separates_workers():
+    tr = IoUTracker()
+    a = lambda x: Detection("person", (x, 0, x + 40, 100))  # noqa: E731
+    b = lambda x: Detection("person", (x + 300, 0, x + 340, 100))  # noqa: E731
+    first = tr.update([a(0), b(0)])
+    for _ in range(5):
+        tr.update([b(0)])  # worker A occluded for 5 frames
+    again = tr.update([a(10), b(0)])
+    assert again[0].track_id == first[0].track_id and again[1].track_id == first[1].track_id
+    assert first[0].track_id != first[1].track_id
