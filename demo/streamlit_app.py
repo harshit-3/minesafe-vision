@@ -60,6 +60,9 @@ if not ON_GPU:
     st.caption("This free demo runs on a 2-core shared CPU, so the live feed is annotated at a few frames per second "
                "(newest frame first, stale frames dropped). On a laptop RTX 4070 the same pipeline runs at 26 FPS.")
 LIVE_FPS = 15 if ON_GPU else 3  # expected processing rate, used by the debouncer's frame-based timing
+_cap = cv2.VideoCapture(str(DEMO_VIDEO))
+DEMO_CLIP_S = _cap.get(cv2.CAP_PROP_FRAME_COUNT) / (_cap.get(cv2.CAP_PROP_FPS) or 15)
+_cap.release()
 RTC_CONFIG = {"iceServers": [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]}
 
 
@@ -140,18 +143,27 @@ class LiveState:
     """Shared between the Streamlit script (config, alert table) and the WebRTC frame thread."""
 
     def __init__(self):
-        self.lock, self.proc, self.key = threading.Lock(), None, None
+        self.lock, self.proc, self.key, self.cfg = threading.Lock(), None, None, None
+        self.loop_s, self.last_pass = None, None
 
-    def configure(self, key, cfg):
+    def configure(self, key, cfg, loop_s=None):
         with self.lock:
             if key != self.key:
-                self.proc, self.key = LiveProcessor(DET, HEAD, cfg, fps=LIVE_FPS), key
+                self.proc, self.key, self.cfg = LiveProcessor(DET, HEAD, cfg, fps=LIVE_FPS), key, cfg
+                self.loop_s, self.last_pass = loop_s, None
 
     def callback(self, frame):
         import av
 
         img = frame.to_ndarray(format="bgr24")
         with self.lock:
+            # The demo clip loops (timestamps keep increasing). Start a fresh pass at each loop so the same
+            # workers are not re-counted as new arrivals every 17 s; a real camera never repeats itself.
+            if self.loop_s and frame.time is not None:
+                n = int(frame.time // self.loop_s)
+                if self.last_pass is not None and n != self.last_pass:
+                    self.proc = LiveProcessor(DET, HEAD, self.cfg, fps=LIVE_FPS)
+                self.last_pass = n
             out, _, _ = self.proc.process(img)
         return av.VideoFrame.from_ndarray(out, format="bgr24")
 
@@ -172,7 +184,7 @@ with tab_live:
     if "live" not in st.session_state:
         st.session_state.live = LiveState()
     live = st.session_state.live
-    live.configure((tuple(ppe), margin, webcam), cfg)
+    live.configure((tuple(ppe), margin, webcam), cfg, None if webcam else DEMO_CLIP_S)
     c1, c2 = st.columns([3, 2])
     with c1:
         ctx = webrtc_streamer(
