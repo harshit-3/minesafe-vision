@@ -1,13 +1,15 @@
 """Streamlit demo for free hosting (Streamlit Community Cloud).  Run:  streamlit run demo/streamlit_app.py
 
 Same pipeline as the Gradio app (app.py): detector + head classifier + tracker + rules + debouncer.
-Video is played back annotated *while* it is processed, with alerts appearing as they fire.
+The Live tab streams a camera over WebRTC: each frame is annotated on the server and streamed back in real
+time, and stale frames are dropped (never queued) when inference is slower than the camera.
 """
 from __future__ import annotations
 
 import os
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -15,6 +17,7 @@ import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
+from streamlit_webrtc import WebRtcMode, webrtc_streamer
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT).startswith("/mount/src"):  # Streamlit Community Cloud: small shared CPU
@@ -54,15 +57,17 @@ st.title("MineSafe Vision")
 st.markdown("PPE compliance and vehicle-proximity monitoring for site cameras: fine-tuned **YOLO26s** + a "
             "high-resolution **head classifier**, served with ONNX Runtime (no PyTorch).")
 if not ON_GPU:
-    st.caption("This free demo runs on a shared CPU, so video is analysed at ~3 frames per second of footage. "
-               "On a laptop RTX 4070 the full pipeline runs live at 26 FPS.")
+    st.caption("This free demo runs on a 2-core shared CPU, so the live feed is annotated at a few frames per second "
+               "(newest frame first, stale frames dropped). On a laptop RTX 4070 the same pipeline runs at 26 FPS.")
+LIVE_FPS = 15 if ON_GPU else 3  # expected processing rate, used by the debouncer's frame-based timing
+RTC_CONFIG = {"iceServers": [{"urls": ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"]}]}
 
 
 def show_image_result(bgr: np.ndarray):
     _, workers, ann = process_image(DET, bgr, cfg, HEAD)
     s = summarise(workers)
     c1, c2 = st.columns([3, 2])
-    c1.image(cv2.cvtColor(ann, cv2.COLOR_BGR2RGB), use_container_width=True)
+    c1.image(cv2.cvtColor(ann, cv2.COLOR_BGR2RGB), width="stretch")
     with c2:
         st.markdown(f"**{s['workers']} workers** · {s['compliant']} fully compliant · "
                     f"**{s['violations']} with violations**")
@@ -71,7 +76,7 @@ def show_image_result(bgr: np.ndarray):
                                        for i, d in enumerate(s["details"])]), hide_index=True)
 
 
-tab_img, tab_vid, tab_cam = st.tabs(["Image", "Video (live playback)", "Camera snapshot"])
+tab_live, tab_vid, tab_img = st.tabs(["Live camera", "Recorded video", "Image"])
 
 with tab_img:
     up = st.file_uploader("Site photo", type=["jpg", "jpeg", "png"])
@@ -87,6 +92,7 @@ with tab_img:
         show_image_result(bgr)
 
 with tab_vid:
+    st.caption("For reviewing footage after an incident. Monitoring itself runs on the live feed.")
     vup = st.file_uploader("Site video", type=["mp4", "mov", "avi", "mkv"])
     run = st.button("Analyse demo clip" if not vup else "Analyse video", type="primary")
     if run:
@@ -117,9 +123,9 @@ with tab_vid:
             out, _, new = proc.process(frame)
             if new or time.perf_counter() - last > 0.15:
                 last = time.perf_counter()
-                frame_slot.image(cv2.cvtColor(out, cv2.COLOR_BGR2RGB), use_container_width=True)
+                frame_slot.image(cv2.cvtColor(out, cv2.COLOR_BGR2RGB), width="stretch")
                 ev = pd.DataFrame(proc.events[::-1])[EVENT_COLS] if proc.events else pd.DataFrame(columns=EVENT_COLS)
-                table_slot.dataframe(ev, hide_index=True, use_container_width=True)
+                table_slot.dataframe(ev, hide_index=True, width="stretch")
                 bar.progress(min(idx / limit, 1.0))
         cap.release()
         bar.progress(1.0)
@@ -128,9 +134,63 @@ with tab_vid:
         if total > limit:
             st.caption(f"Public demo analyses the first {MAX_VIDEO_S} s only.")
 
-with tab_cam:
-    st.caption("Take a photo with your camera; it is checked immediately. (Continuous live webcam monitoring runs "
-               "in the local Gradio app and the browser MJPEG stream, see the README.)")
-    shot = st.camera_input("Camera") if st.toggle("Turn on camera") else None
-    if shot:
-        show_image_result(cv2.imdecode(np.frombuffer(shot.getvalue(), np.uint8), cv2.IMREAD_COLOR))
+
+
+class LiveState:
+    """Shared between the Streamlit script (config, alert table) and the WebRTC frame thread."""
+
+    def __init__(self):
+        self.lock, self.proc, self.key = threading.Lock(), None, None
+
+    def configure(self, key, cfg):
+        with self.lock:
+            if key != self.key:
+                self.proc, self.key = LiveProcessor(DET, HEAD, cfg, fps=LIVE_FPS), key
+
+    def callback(self, frame):
+        import av
+
+        img = frame.to_ndarray(format="bgr24")
+        with self.lock:
+            out, _, _ = self.proc.process(img)
+        return av.VideoFrame.from_ndarray(out, format="bgr24")
+
+
+def demo_camera():
+    from aiortc.contrib.media import MediaPlayer
+
+    return MediaPlayer(str(DEMO_VIDEO), loop=True)  # plays at the clip's own frame rate, like a CCTV feed
+
+
+with tab_live:
+    source = st.radio("Camera", ["Demo site camera (streamed from the server)", "Your webcam"], horizontal=True)
+    webcam = source == "Your webcam"
+    st.caption("Press **START**. Every frame is checked as it arrives; an alert fires when the same tracked worker "
+               "keeps a violation, once per worker, not once per frame." +
+               (" Your browser will ask for camera access; video goes only to this demo's server and is not stored."
+                if webcam else ""))
+    if "live" not in st.session_state:
+        st.session_state.live = LiveState()
+    live = st.session_state.live
+    live.configure((tuple(ppe), margin, webcam), cfg)
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        ctx = webrtc_streamer(
+            key="live-webcam" if webcam else "live-demo",
+            mode=WebRtcMode.SENDRECV if webcam else WebRtcMode.RECVONLY,
+            rtc_configuration=RTC_CONFIG,
+            media_stream_constraints={"video": {"width": 640, "height": 480} if webcam else True, "audio": False},
+            player_factory=None if webcam else demo_camera,
+            video_frame_callback=live.callback,
+            async_processing=True,  # drop stale frames instead of queueing them
+        )
+    with c2:
+        st.markdown("**Alerts**")
+        slot = st.empty()
+        while ctx.state.playing:
+            with live.lock:
+                events = list(live.proc.events)
+            slot.dataframe(pd.DataFrame(events[::-1])[EVENT_COLS] if events else pd.DataFrame(columns=EVENT_COLS),
+                           hide_index=True, width="stretch")
+            time.sleep(1)
+        slot.caption("Alerts appear here while the stream is running.")
